@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pelacak Qada Salat Fulan</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4 font-sans">
+
+  <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-xl font-bold text-emerald-400">Qada Salat Tracker</h1>
+        <p class="text-xs text-slate-400">Target Lunas: 1.826 Hari (9.130 Salat)</p>
+      </div>
+      <span id="sync-status" class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">
+        Memuat...
+      </span>
+    </div>
+
+    <!-- Dashboard Total Terbayar & Persentase -->
+    <div class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4 mb-5">
+      <div class="flex justify-between items-end mb-2">
+        <div>
+          <p class="text-xs text-slate-400 uppercase tracking-wider">Total Terbayar</p>
+          <p class="text-2xl font-extrabold text-white">
+            <span id="total-paid">0</span> <span class="text-sm font-normal text-slate-400">/ 9.130</span>
+          </p>
+        </div>
+        <div class="text-right">
+          <span id="total-percent" class="text-2xl font-extrabold text-emerald-400">0.00%</span>
+        </div>
+      </div>
+      <div class="w-full bg-slate-700 rounded-full h-3 overflow-hidden">
+        <div id="progress-bar" class="bg-emerald-500 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+      </div>
+    </div>
+
+    <!-- Tombol Aksi Utama (+1 Paket Lengkap & Undo) -->
+    <div class="grid grid-cols-3 gap-2.5 mb-5">
+      <button onclick="addFullPackage()" class="col-span-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold py-3 px-4 rounded-xl transition shadow-lg shadow-emerald-950/50 text-sm">
+        +1 Paket Lengkap (5 Waktu)
+      </button>
+      <button id="undo-btn" onclick="undoLastAction()" disabled class="bg-amber-600/20 border border-amber-500/40 text-amber-300 hover:bg-amber-600/30 disabled:opacity-30 disabled:pointer-events-none font-semibold py-3 px-3 rounded-xl transition text-sm">
+        ↩ Undo
+      </button>
+    </div>
+
+    <!-- Daftar Per Waktu Salat (Opsi A) -->
+    <div id="prayer-list" class="space-y-3">
+      <!-- Dirender otomatis oleh JavaScript -->
+    </div>
+  </div>
+
+  <script>
+    const API_URL = "https://script.google.com/macros/s/AKfycbxs_jz0AuWNisaITK7hkApI4-CfjoXpwWuVy6Ey24hsEanZ1LWiC96GfE4Xc7e0bHFL/exec";
+
+    let prayerData = [
+      { waktu: "Subuh", terbayar: 0, target: 1826 },
+      { waktu: "Zuhur", terbayar: 0, target: 1826 },
+      { waktu: "Asar", terbayar: 0, target: 1826 },
+      { waktu: "Magrib", terbayar: 0, target: 1826 },
+      { waktu: "Isya", terbayar: 0, target: 1826 }
+    ];
+
+    let historyStack = [];
+    let saveTimeout = null;
+
+    function setStatus(text, isSaving = false) {
+      const el = document.getElementById("sync-status");
+      el.textContent = text;
+      el.className = isSaving
+        ? "text-xs px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300"
+        : "text-xs px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300";
+    }
+
+    function renderUI() {
+      const listEl = document.getElementById("prayer-list");
+      listEl.innerHTML = "";
+
+      let totalPaid = 0;
+      let totalTarget = 0;
+
+      prayerData.forEach((item, index) => {
+        totalPaid += item.terbayar;
+        totalTarget += item.target;
+        const pct = Math.min(100, (item.terbayar / item.target) * 100).toFixed(1);
+
+        listEl.innerHTML += `
+          <div class="bg-slate-800/40 border border-slate-800 rounded-xl p-3.5 flex items-center justify-between">
+            <div class="w-2/3 pr-3">
+              <div class="flex justify-between text-sm mb-1">
+                <span class="font-semibold text-slate-200">${item.waktu}</span>
+                <span class="text-slate-400 text-xs">${item.terbayar.toLocaleString('id-ID')} / ${item.target.toLocaleString('id-ID')} (${pct}%)</span>
+              </div>
+              <div class="w-full bg-slate-800 rounded-full h-1.5">
+                <div class="bg-emerald-400 h-1.5 rounded-full transition-all duration-200" style="width: ${pct}%"></div>
+              </div>
+            </div>
+            <button onclick="addSingle(${index})" class="bg-slate-700 hover:bg-emerald-600 active:scale-95 text-white font-bold px-4 py-2 rounded-lg transition text-sm">
+              +1
+            </button>
+          </div>
+        `;
+      });
+
+      const overallPercent = ((totalPaid / totalTarget) * 100).toFixed(2);
+      document.getElementById("total-paid").textContent = totalPaid.toLocaleString("id-ID");
+      document.getElementById("total-percent").textContent = `${overallPercent}%`;
+      document.getElementById("progress-bar").style.width = `${Math.min(100, overallPercent)}%`;
+      document.getElementById("undo-btn").disabled = historyStack.length === 0;
+    }
+
+    function saveSnapshot() {
+      historyStack.push(prayerData.map(item => ({ ...item })));
+      if (historyStack.length > 20) historyStack.shift(); // Simpan hingga 20 langkah undo
+    }
+
+    function addSingle(index) {
+      saveSnapshot();
+      prayerData[index].terbayar += 1;
+      renderUI();
+      queueSyncToSheet();
+    }
+
+    function addFullPackage() {
+      saveSnapshot();
+      prayerData.forEach(item => item.terbayar += 1);
+      renderUI();
+      queueSyncToSheet();
+    }
+
+    function undoLastAction() {
+      if (historyStack.length === 0) return;
+      prayerData = historyStack.pop();
+      renderUI();
+      queueSyncToSheet();
+    }
+
+    // Debounce 1 detik agar kalau Fulan klik cepat berkali-kali, pengiriman ke Sheets digabung jadi 1x request
+    function queueSyncToSheet() {
+      setStatus("Menyimpan...", true);
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(async () => {
+        try {
+          const payload = { values: prayerData.map(item => item.terbayar) };
+          await fetch(API_URL, {
+            method: "POST",
+            mode: "no-cors",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          setStatus("Tersimpan ✓", false);
+        } catch (err) {
+          setStatus("Gagal sinkron", true);
+        }
+      }, 1000);
+    }
+
+    async function loadFromSheet() {
+      try {
+        const res = await fetch(API_URL);
+        const data = await res.json();
+        if (Array.isArray(data) && data.length === 5) {
+          prayerData = data;
+        }
+        renderUI();
+        setStatus("Tersinkron ✓", false);
+      } catch (err) {
+        renderUI();
+        setStatus("Mode Offline", true);
+      }
+    }
+
+    loadFromSheet();
+  </script>
+</body>
+</html>
